@@ -1,3 +1,4 @@
+var fs = require('fs');
 var q = require('q');
 var http = require('http');
 var _ = require('underscore');
@@ -55,8 +56,18 @@ module.exports.getInnerUrls = function(outerUrl){
 	.then(function(body){
 		var $ = cheerio.load(body);
 		var innerUrl = $('.post-meta a').attr('href');
-		console.log(innerUrl);
-		deferred.resolve(innerUrl);
+		if(!innerUrl || innerUrl === "http://"){
+			deferred.resolve(innerUrl);
+		}
+		else{
+			fs.appendFile(config.collegeListFile, "\"" + innerUrl + "\", ", function (err) {
+				console.log('wrote to file: ' + innerUrl);
+				if(err)
+					deferred.reject(err);
+				else
+					deferred.resolve(innerUrl);
+			});
+		}
 	})
 	.catch(deferred.reject);
 
