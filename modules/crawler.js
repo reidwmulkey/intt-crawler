@@ -7,24 +7,59 @@ var crawler = require('js-crawler');
 
 var config = require('./config');
 
+module.exports.writeColleges = function(filteredColleges){
+	console.log('writing colleges.');
+	var deferred = q.defer();
+	fs.appendFile(config.collegeListFile, JSON.stringify(filteredColleges), function (err) {
+		console.log('wrote to file.');
+		if(err)
+			deferred.reject(err);
+		else
+			deferred.resolve(filteredColleges);
+	});
+	return deferred.promise;
+}
+
+module.exports.filterColleges = function(collegeList){
+	console.log('filtering colleges');
+	var deferred = q.defer();
+	var filteredColleges = [];
+	_.each(collegeList, function(college){
+		if(college.innerUrl && college.innerUrl !== 'http://'){
+			filteredColleges.push(college);
+		}
+	});
+	console.log('filtered colleges.');
+	deferred.resolve(filteredColleges);
+	return deferred.promise;
+}
+
 module.exports.getColleges = function(){
 	var deferred = q.defer();
 	var promises = [];
 
-	_.each(config.stateList, function(state){
-		promises.push(module.exports.getOuterUrls(state));
+	_.each(config.stateListWithCodes, function(state){
+		promises.push(module.exports.getOuterCollegeObject(state));
 	});
 
 	q.all(promises)
-	.then(function(outerUrls){
+	.then(function(outerCollegeObjects){
 		var promises = [];
-
-		_.each(_.flatten(outerUrls), function(outerUrl){
-			promises.push(module.exports.getInnerUrls(outerUrl));
-		})
+		_.each(outerCollegeObjects, function(outerCollegeObject){
+			_.each(outerCollegeObject.outerUrls, function(outerUrl){
+				var collegeObject = {
+					postalCode: outerCollegeObject.postalCode,
+					name: outerCollegeObject.name,
+					url: outerCollegeObject.url,
+					outerUrl: outerUrl
+				};
+				promises.push(module.exports.getInnerCollegeObject(collegeObject));
+			});
+		});
 		q.all(promises)
-		.then(function(innerUrls){
-			deferred.resolve(innerUrls);
+		.then(function(innerCollegeObjects){
+			console.log('retrieved all college urls');
+			deferred.resolve(innerCollegeObjects);
 		});
 	})
 	.catch(deferred.reject);
@@ -32,10 +67,12 @@ module.exports.getColleges = function(){
 	return deferred.promise;
 }
 
-module.exports.getOuterUrls = function(stateUrl){
+module.exports.getOuterCollegeObject = function(state){
 	var deferred = q.defer();
-	get(stateUrl)
+	console.log('getting colleges for ' + state.name);
+	get(state.url)
 	.then(function(body){
+		console.log('got ' + state.name);
 		var $ = cheerio.load(body);
 		var list = $('tbody a');
 		var pages = [];
@@ -43,31 +80,30 @@ module.exports.getOuterUrls = function(stateUrl){
 			var $item = $(item);
 			pages.push(config.baseURL + $item.attr('href'));
 		});
-		deferred.resolve(pages);
+		state.outerUrls = pages;
+		deferred.resolve(state);
 	})
 	.catch(deferred.reject);
 
 	return deferred.promise;
 }
 
-module.exports.getInnerUrls = function(outerUrl){
+module.exports.getInnerCollegeObject = function(outerCollegeObject){
 	var deferred = q.defer();
-	get(outerUrl)
+	console.log('getting outerUrl ' + outerCollegeObject.outerUrl);
+	get(outerCollegeObject.outerUrl)
 	.then(function(body){
 		var $ = cheerio.load(body);
 		var innerUrl = $('.post-meta a').attr('href');
-		if(!innerUrl || innerUrl === "http://"){
-			deferred.resolve(innerUrl);
-		}
-		else{
-			fs.appendFile(config.collegeListFile, "\"" + innerUrl + "\", ", function (err) {
-				console.log('wrote to file: ' + innerUrl);
-				if(err)
-					deferred.reject(err);
-				else
-					deferred.resolve(innerUrl);
-			});
-		}
+		var innerCollegeObject = {
+			postalCode: outerCollegeObject.postalCode,
+			name: outerCollegeObject.name,
+			url: outerCollegeObject.url,
+			outerUrl: outerCollegeObject.outerUrl,
+			innerUrl: innerUrl
+		};
+		console.log('retrieved inner url ' + innerUrl);
+		deferred.resolve(innerCollegeObject);
 	})
 	.catch(deferred.reject);
 
@@ -75,6 +111,8 @@ module.exports.getInnerUrls = function(outerUrl){
 }
 
 module.exports.crawlColleges = function(){
+	var collegeList = JSON.parse(fs.readFileSync(config.collegeListFile, 'utf8'));
+	console.log(collegeList);
 	new Crawler().configure({depth: 1})
 	.crawl("http://www.google.com", function onSuccess(page) {
 	console.log(page.url);
@@ -92,6 +130,7 @@ function get(url){
 			deferred.resolve(body);
 		});
 	})
-	.on('error', deferred.reject);
+	.on('error', deferred.reject)
+	.setTimeout(1000000, deferred.reject);
 	return deferred.promise;
 }
